@@ -1,3 +1,5 @@
+import os
+
 from aci.common.utils import check_and_get_env_variable, construct_db_url
 
 ENVIRONMENT = check_and_get_env_variable("SERVER_ENVIRONMENT")
@@ -31,6 +33,13 @@ DB_FULL_URL = construct_db_url(DB_SCHEME, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT
 # PropelAuth
 PROPELAUTH_AUTH_URL = check_and_get_env_variable("SERVER_PROPELAUTH_AUTH_URL")
 PROPELAUTH_API_KEY = check_and_get_env_variable("SERVER_PROPELAUTH_API_KEY")
+
+# Static admin key — stopgap for /v1/projects and /v1/tool-seeding while
+# PropelAuth isn't fully wired up. Optional; routes relying on it will error
+# clearly if unset (503). No per-user/org-membership model behind it: a valid
+# key is trusted as a full admin, org_id/project_id supplied by the caller
+# are used as-is.
+STATIC_ADMIN_KEY = os.getenv("SERVER_STATIC_ADMIN_KEY")
 
 # SVIX
 SVIX_SIGNING_SECRET = check_and_get_env_variable("SERVER_SVIX_SIGNING_SECRET")

@@ -18,6 +18,7 @@ The backend component of ACI.dev provides the server infrastructure, API endpoin
     - [Running Tests](#running-tests)
   - [Database Management](#database-management)
     - [Working with Migrations](#working-with-migrations)
+  - [Static Admin Key (SERVER_STATIC_ADMIN_KEY)](#static-admin-key-server_static_admin_key)
   - [PropelAuth Configuration](#propelauth-configuration)
   - [Stripe Webhooks](#stripe-webhooks)
   - [Admin CLI](#admin-cli)
@@ -221,6 +222,20 @@ When making changes to database models:
    ```bash
    docker compose exec runner alembic downgrade -1
    ```
+
+## Static Admin Key (`SERVER_STATIC_ADMIN_KEY`)
+
+`/v1/projects` and `/v1/tool-seeding` are gated by a single shared secret instead of
+PropelAuth user auth, since PropelAuth isn't fully wired up yet. Set
+`SERVER_STATIC_ADMIN_KEY` to a long random value and send it as
+`Authorization: Bearer <key>` on requests to those routes.
+
+There is no per-user/org-membership model behind this key: any request bearing the
+correct key is trusted as a full admin, and `org_id`/`project_id` supplied by the
+caller are used as-is (not checked against org membership). Every other route that
+still depends on `auth.require_user` (billing, organizations, the PropelAuth
+webhook) is unaffected — see [PropelAuth Configuration](#propelauth-configuration)
+for those.
 
 ## PropelAuth Configuration
 

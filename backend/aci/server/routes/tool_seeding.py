@@ -19,16 +19,13 @@ from sqlalchemy.orm import Session
 from aci.cli.commands import upsert_app, upsert_functions
 from aci.common.db import crud
 from aci.common.db.sql_models import App, Function
-from aci.server import config, dependencies as deps
-from aci.server.acl import get_propelauth
+from aci.server import acl, config, dependencies as deps
 from aci.common.logging_setup import get_logger
 from aci.common.schemas.app import AppDetails
 from aci.common.schemas.function import FunctionDetails
-from propelauth_fastapi import User
 
 logger = get_logger(__name__)
 router = APIRouter()
-auth = get_propelauth()
 
 
 class AppUpsertRequest(BaseModel):
@@ -85,7 +82,7 @@ class ToolJsonRequest(BaseModel):
 
 @router.post("/upsert-app", response_model=ToolSeedingResponse)
 async def upsert_app_via_api(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: AppUpsertRequest,
@@ -96,7 +93,7 @@ async def upsert_app_via_api(
 
     This allows adding new tools/apps with their JSON configurations and credentials.
     """
-    logger.info(f"Upsert app, user_id={user.user_id}, org_id={org_id}")
+    logger.info(f"Upsert app, org_id={org_id}")
     try:
         # Convert relative path to absolute path
         app_file_path = Path(request.app_path)
@@ -161,7 +158,7 @@ async def upsert_app_via_api(
 
 @router.post("/upsert-functions", response_model=ToolSeedingResponse)
 async def upsert_functions_via_api(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: FunctionsUpsertRequest,
@@ -172,7 +169,7 @@ async def upsert_functions_via_api(
 
     This allows adding new functions for existing apps.
     """
-    logger.info(f"Upsert functions, user_id={user.user_id}, org_id={org_id}")
+    logger.info(f"Upsert functions, org_id={org_id}")
     try:
         # Convert relative path to absolute path
         functions_file_path = Path(request.functions_path)
@@ -218,7 +215,7 @@ async def upsert_functions_via_api(
 
 @router.post("/seed-tool", response_model=ToolSeedingResponse)
 async def seed_tool(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: SeedingRequest,
@@ -227,7 +224,7 @@ async def seed_tool(
     Seed a tool (app + functions) via API - matches frontend interface.
     This is the main endpoint that the frontend tool-seeding page uses.
     """
-    logger.info(f"Seed tool, user_id={user.user_id}, org_id={org_id}")
+    logger.info(f"Seed tool, org_id={org_id}")
     try:
         results = []
 
@@ -238,7 +235,7 @@ async def seed_tool(
             skip_dry_run=request.skip_dry_run
         )
 
-        app_response = await upsert_app_via_api(user, org_id, db_session, app_request)
+        app_response = await upsert_app_via_api(_admin, org_id, db_session, app_request)
         results.append(f"App: {app_response.message}")
 
         if not app_response.success:
@@ -254,7 +251,7 @@ async def seed_tool(
                 skip_dry_run=request.skip_dry_run
             )
 
-            functions_response = await upsert_functions_via_api(user, org_id, db_session, functions_request)
+            functions_response = await upsert_functions_via_api(_admin, org_id, db_session, functions_request)
             results.append(f"Functions: {functions_response.message}")
 
             if not functions_response.success:
@@ -280,7 +277,7 @@ async def seed_tool(
 
 @router.get("/available-apps", response_model=List[Dict[str, Any]])
 async def get_available_apps(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> List[Dict[str, Any]]:
@@ -331,7 +328,7 @@ async def get_available_apps(
 
 @router.get("/seeded-apps", response_model=List[AppDetails])
 async def get_seeded_apps(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> List[AppDetails]:
@@ -386,7 +383,7 @@ async def get_seeded_apps(
 
 @router.get("/seeding-status", response_model=Dict[str, Any])
 async def get_seeding_status(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> Dict[str, Any]:
@@ -415,7 +412,7 @@ async def get_seeding_status(
 
 @router.post("/run-seed-script", response_model=ToolSeedingResponse)
 async def run_seed_script(
-    user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     script_path: str = "./scripts/seed_db.sh",
@@ -429,7 +426,7 @@ async def run_seed_script(
 
     Restricted to scripts under the repository ``/workdir/scripts`` directory.
     """
-    logger.info(f"Run seed script, user_id={user.user_id}, org_id={org_id}")
+    logger.info(f"Run seed script, org_id={org_id}")
     try:
         if args is None:
             args = []
