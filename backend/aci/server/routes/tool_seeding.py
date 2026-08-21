@@ -22,6 +22,7 @@ from aci.common.db.sql_models import App, Function
 from aci.server import acl, config, dependencies as deps
 from aci.common.logging_setup import get_logger
 from aci.common.schemas.app import AppDetails
+from aci.common.schemas.security_scheme import SecuritySchemesPublic
 from aci.common.schemas.function import FunctionDetails
 
 logger = get_logger(__name__)
@@ -684,6 +685,7 @@ async def seed_tool_from_json(
 @router.get("/my-custom-apps", response_model=list[dict])
 async def list_my_custom_apps(
     context: Annotated[deps.RequestContext, Depends(deps.get_request_context)],
+    has_admin_key: Annotated[bool, Depends(acl.is_valid_static_admin_key)],
 ) -> list[dict]:
     """
     List all custom apps created by the current API key holder.
@@ -702,7 +704,13 @@ async def list_my_custom_apps(
                 "description": app.description,
                 "categories": app.categories,
                 "active": app.active,
-                "security_schemes": app.security_schemes,
+                "security_schemes": (
+                    app.security_schemes
+                    if has_admin_key
+                    else SecuritySchemesPublic.model_validate(app.security_schemes).model_dump(
+                        exclude_none=True
+                    )
+                ),
                 "created_at": app.created_at.isoformat(),
                 "updated_at": app.updated_at.isoformat(),
             }

@@ -103,6 +103,56 @@ def test_get_linked_account_with_oauth2_credentials(
     assert security_credentials["refresh_token"], "OAuth2 credentials should contain refresh_token"
 
 
+def test_get_linked_account_omits_client_credentials_without_admin_key(
+    test_client: TestClient,
+    dummy_api_key_1: str,
+    dummy_linked_account_oauth2_google_project_1: LinkedAccount,
+) -> None:
+    """ACI-10: without the static admin key, client_id/client_secret must not
+    be present, since they freeze whichever OAuth2 client (including ACI's
+    shared platform apps) was used at link time."""
+    ENDPOINT = (
+        f"{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/{dummy_linked_account_oauth2_google_project_1.id}"
+    )
+
+    response = test_client.get(ENDPOINT, headers={"x-api-key": dummy_api_key_1})
+    assert response.status_code == status.HTTP_200_OK
+
+    security_credentials = response.json()["security_credentials"]
+    assert "client_id" not in security_credentials
+    assert "client_secret" not in security_credentials
+    assert security_credentials["access_token"], "OAuth2 credentials should still contain access_token"
+
+
+def test_get_linked_account_returns_client_credentials_with_admin_key(
+    test_client: TestClient,
+    dummy_api_key_1: str,
+    dummy_linked_account_oauth2_google_project_1: LinkedAccount,
+) -> None:
+    """A caller holding the static admin key still gets the real OAuth2 client
+    credentials (e.g. lyzr-agent/data-query, which need them to mint tokens)."""
+    assert config.STATIC_ADMIN_KEY, "test env must set SERVER_STATIC_ADMIN_KEY"
+    ENDPOINT = (
+        f"{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/{dummy_linked_account_oauth2_google_project_1.id}"
+    )
+
+    response = test_client.get(
+        ENDPOINT,
+        headers={
+            "x-api-key": dummy_api_key_1,
+            "Authorization": f"Bearer {config.STATIC_ADMIN_KEY}",
+        },
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    security_credentials = response.json()["security_credentials"]
+    assert security_credentials["client_id"] == "dummy_linked_account_oauth2_credentials_client_id"
+    assert (
+        security_credentials["client_secret"]
+        == "dummy_linked_account_oauth2_credentials_client_secret"
+    )
+
+
 def test_get_linked_account_with_expired_oauth2_credentials(
     test_client: TestClient,
     dummy_api_key_1: str,

@@ -75,6 +75,46 @@ def require_static_key(
         )
 
 
+def is_valid_static_admin_key(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_static_key_bearer)] = None,
+) -> bool:
+    """Non-throwing check for the shared static admin key (see require_static_key
+    above). Unlike require_static_key, this never raises: routes that are already
+    gated by per-project API-key auth (or a signed OAuth2 state token) use it to
+    conditionally unlock admin-only response fields — e.g. the platform's OAuth2
+    client_id/client_secret — rather than to gate the route itself.
+    """
+    return bool(
+        config.STATIC_ADMIN_KEY
+        and credentials is not None
+        and credentials.credentials == config.STATIC_ADMIN_KEY
+    )
+
+
+def strip_oauth2_client_credentials(
+    security_credentials: dict[str, object], *, redact_value: str | None = None
+) -> dict[str, object]:
+    """Redact client_id/client_secret from a linked account's (or app's) stored
+    OAuth2 credentials/security-scheme dict, e.g. before returning it to a caller
+    that doesn't hold the static admin key.
+
+    These freeze whichever OAuth2 client was used at link/seed time — including
+    ACI's own shared platform apps (e.g. AIPOLABS_GMAIL_CLIENT_SECRET) when no
+    tenant override exists — so any tenant that can read one back would obtain a
+    credential trusted across every tenant.
+
+    No-op if the dict has neither key (api_key/no_auth schemes). `redact_value`
+    defaults to None (drop to null) for schemas where the fields are optional;
+    pass a placeholder string for schemas where they're required.
+    """
+    if "client_id" not in security_credentials and "client_secret" not in security_credentials:
+        return security_credentials
+    stripped = dict(security_credentials)
+    stripped["client_id"] = redact_value
+    stripped["client_secret"] = redact_value
+    return stripped
+
+
 def validate_project_exists(db_session: Session, project_id: UUID) -> Project:
     project = crud.projects.get_project(db_session, project_id)
     if not project:
