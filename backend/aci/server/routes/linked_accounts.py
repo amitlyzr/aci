@@ -42,7 +42,7 @@ from aci.common.schemas.security_scheme import (
     OAuth2FlowType,
     OAuth2SchemeCredentials,
 )
-from aci.server import config, quota_manager
+from aci.server import acl, config, quota_manager
 from aci.server import dependencies as deps
 from aci.server import security_credentials_manager as scm
 from aci.server.oauth2_manager import OAuth2Manager
@@ -659,6 +659,7 @@ async def link_oauth2_account(
 async def linked_accounts_oauth2_callback(
     request: Request,
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
+    has_admin_key: Annotated[bool, Depends(acl.is_valid_static_admin_key)],
 ) -> LinkedAccount | RedirectResponse:
     """
     Callback endpoint for OAuth2 account linking.
@@ -873,6 +874,11 @@ async def linked_accounts_oauth2_callback(
             url=state.after_oauth2_link_redirect_url, status_code=status.HTTP_302_FOUND
         )
 
+    if not has_admin_key:
+        linked_account.security_credentials = acl.strip_oauth2_client_credentials(
+            linked_account.security_credentials
+        )
+
     return linked_account
 
 
@@ -1021,6 +1027,7 @@ async def list_linked_accounts(
 )
 async def get_linked_account(
     context: Annotated[deps.RequestContext, Depends(deps.get_request_context)],
+    has_admin_key: Annotated[bool, Depends(acl.is_valid_static_admin_key)],
     linked_account_id: UUID,
 ) -> LinkedAccount:
     """
@@ -1060,6 +1067,11 @@ async def get_linked_account(
     )
     context.db_session.commit()
 
+    if not has_admin_key:
+        linked_account.security_credentials = acl.strip_oauth2_client_credentials(
+            linked_account.security_credentials
+        )
+
     return linked_account
 
 
@@ -1070,6 +1082,7 @@ async def get_linked_account(
 )
 async def get_linked_account_full_credentials(
     context: Annotated[deps.RequestContext, Depends(deps.get_request_context)],
+    has_admin_key: Annotated[bool, Depends(acl.is_valid_static_admin_key)],
     linked_account_id: UUID,
 ) -> LinkedAccount:
     """
@@ -1109,6 +1122,11 @@ async def get_linked_account_full_credentials(
         f"is_updated={security_credentials_response.is_updated}"
     )
     context.db_session.commit()
+
+    if not has_admin_key:
+        linked_account.security_credentials = acl.strip_oauth2_client_credentials(
+            linked_account.security_credentials, redact_value="REDACTED"
+        )
 
     return linked_account
 

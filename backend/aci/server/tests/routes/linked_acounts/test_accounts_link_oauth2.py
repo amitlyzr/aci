@@ -191,6 +191,72 @@ def test_link_oauth2_account_success(
             assert (
                 security_credentials["refresh_token"] == mock_oauth2_token_response["refresh_token"]
             )
+            # ACI-10: without the static admin key, the callback response must not
+            # include the OAuth2 client_id/client_secret used at link time.
+            assert "client_id" not in security_credentials
+            assert "client_secret" not in security_credentials
+
+
+def test_link_oauth2_account_callback_returns_client_credentials_with_admin_key(
+    test_client: TestClient,
+    dummy_api_key_1: str,
+    dummy_app_google: App,
+) -> None:
+    """A caller holding the static admin key still gets the real OAuth2 client
+    credentials back from the callback response (e.g. lyzr-agent/data-query)."""
+    assert config.STATIC_ADMIN_KEY, "test env must set SERVER_STATIC_ADMIN_KEY"
+
+    app_configuration_create = AppConfigurationCreate(
+        app_name=dummy_app_google.name,
+        security_scheme=SecurityScheme.OAUTH2,
+    )
+    response = test_client.post(
+        f"{config.ROUTER_PREFIX_APP_CONFIGURATIONS}",
+        json=app_configuration_create.model_dump(mode="json"),
+        headers={"x-api-key": dummy_api_key_1},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    body = LinkedAccountOAuth2Create(
+        app_name=dummy_app_google.name,
+        linked_account_owner_id="test_link_oauth2_account_callback_admin_key",
+    )
+    response = test_client.get(
+        f"{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/oauth2",
+        params=body.model_dump(mode="json", exclude_none=True),
+        headers={"x-api-key": dummy_api_key_1},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    authorization_url = str(response.json()["url"])
+    state_jwt = parse_qs(urlparse(authorization_url).query).get("state", [None])[0]
+    assert state_jwt is not None
+
+    mock_oauth2_token_response = {
+        "access_token": "mock_access_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "mock_refresh_token",
+    }
+    with patch(
+        "aci.server.oauth2_manager.OAuth2Manager.fetch_token",
+        new=AsyncMock(return_value=mock_oauth2_token_response),
+    ):
+        response = test_client.get(
+            f"{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/oauth2/callback",
+            params={"state": state_jwt, "code": "mock_auth_code"},
+            headers={"Authorization": f"Bearer {config.STATIC_ADMIN_KEY}"},
+        )
+    assert response.status_code == status.HTTP_200_OK
+
+    security_credentials = response.json()["security_credentials"]
+    assert (
+        security_credentials["client_id"]
+        == dummy_app_google.security_schemes[SecurityScheme.OAUTH2]["client_id"]
+    )
+    assert (
+        security_credentials["client_secret"]
+        == dummy_app_google.security_schemes[SecurityScheme.OAUTH2]["client_secret"]
+    )
 
 
 def test_link_oauth2_account_non_existent_app_configuration(

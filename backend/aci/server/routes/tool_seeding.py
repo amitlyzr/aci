@@ -3,6 +3,7 @@ Tool seeding routes for managing apps and functions via API
 Matches the Docker exec commands from README.md
 """
 
+import asyncio
 import json
 import os
 import subprocess
@@ -18,16 +19,14 @@ from sqlalchemy.orm import Session
 from aci.cli.commands import upsert_app, upsert_functions
 from aci.common.db import crud
 from aci.common.db.sql_models import App, Function
-from aci.server import config, dependencies as deps
-from aci.server.acl import get_propelauth
+from aci.server import acl, config, dependencies as deps
 from aci.common.logging_setup import get_logger
 from aci.common.schemas.app import AppDetails
+from aci.common.schemas.security_scheme import SecuritySchemesPublic
 from aci.common.schemas.function import FunctionDetails
-from propelauth_fastapi import User
 
 logger = get_logger(__name__)
 router = APIRouter()
-auth = get_propelauth()
 
 
 class AppUpsertRequest(BaseModel):
@@ -84,6 +83,7 @@ class ToolJsonRequest(BaseModel):
 
 @router.post("/upsert-app", response_model=ToolSeedingResponse)
 async def upsert_app_via_api(
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: AppUpsertRequest,
@@ -94,6 +94,7 @@ async def upsert_app_via_api(
 
     This allows adding new tools/apps with their JSON configurations and credentials.
     """
+    logger.info(f"Upsert app, org_id={org_id}")
     try:
         # Convert relative path to absolute path
         app_file_path = Path(request.app_path)
@@ -158,6 +159,7 @@ async def upsert_app_via_api(
 
 @router.post("/upsert-functions", response_model=ToolSeedingResponse)
 async def upsert_functions_via_api(
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: FunctionsUpsertRequest,
@@ -168,6 +170,7 @@ async def upsert_functions_via_api(
 
     This allows adding new functions for existing apps.
     """
+    logger.info(f"Upsert functions, org_id={org_id}")
     try:
         # Convert relative path to absolute path
         functions_file_path = Path(request.functions_path)
@@ -213,6 +216,7 @@ async def upsert_functions_via_api(
 
 @router.post("/seed-tool", response_model=ToolSeedingResponse)
 async def seed_tool(
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     request: SeedingRequest,
@@ -221,6 +225,7 @@ async def seed_tool(
     Seed a tool (app + functions) via API - matches frontend interface.
     This is the main endpoint that the frontend tool-seeding page uses.
     """
+    logger.info(f"Seed tool, org_id={org_id}")
     try:
         results = []
 
@@ -231,7 +236,7 @@ async def seed_tool(
             skip_dry_run=request.skip_dry_run
         )
 
-        app_response = await upsert_app_via_api(org_id, db_session, app_request)
+        app_response = await upsert_app_via_api(_admin, org_id, db_session, app_request)
         results.append(f"App: {app_response.message}")
 
         if not app_response.success:
@@ -247,7 +252,7 @@ async def seed_tool(
                 skip_dry_run=request.skip_dry_run
             )
 
-            functions_response = await upsert_functions_via_api(org_id, db_session, functions_request)
+            functions_response = await upsert_functions_via_api(_admin, org_id, db_session, functions_request)
             results.append(f"Functions: {functions_response.message}")
 
             if not functions_response.success:
@@ -273,7 +278,7 @@ async def seed_tool(
 
 @router.get("/available-apps", response_model=List[Dict[str, Any]])
 async def get_available_apps(
-    # user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> List[Dict[str, Any]]:
@@ -324,7 +329,7 @@ async def get_available_apps(
 
 @router.get("/seeded-apps", response_model=List[AppDetails])
 async def get_seeded_apps(
-    # user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> List[AppDetails]:
@@ -379,7 +384,7 @@ async def get_seeded_apps(
 
 @router.get("/seeding-status", response_model=Dict[str, Any])
 async def get_seeding_status(
-    # user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
 ) -> Dict[str, Any]:
@@ -408,7 +413,7 @@ async def get_seeding_status(
 
 @router.post("/run-seed-script", response_model=ToolSeedingResponse)
 async def run_seed_script(
-    # user: Annotated[User, Depends(auth.require_user)],
+    _admin: Annotated[None, Depends(acl.require_static_key)],
     org_id: Annotated[str, Header(alias=config.ACI_ORG_ID_HEADER)],
     db_session: Annotated[Session, Depends(deps.yield_db_session)],
     script_path: str = "./scripts/seed_db.sh",
@@ -419,15 +424,27 @@ async def run_seed_script(
     docker compose exec runner ./scripts/seed_db.sh --all --mock
 
     This allows running the full database seeding process.
+
+    Restricted to scripts under the repository ``/workdir/scripts`` directory.
     """
+    logger.info(f"Run seed script, org_id={org_id}")
     try:
         if args is None:
             args = []
 
-        # Convert relative path to absolute path
+        # Restrict script execution to the seeding scripts directory to prevent
+        # arbitrary-file execution (the endpoint previously executed any path).
+        allowed_base = Path("/workdir/scripts").resolve()
         script_file_path = Path(script_path)
         if not script_file_path.is_absolute():
             script_file_path = Path("/workdir") / script_file_path
+        script_file_path = script_file_path.resolve()
+
+        if not script_file_path.is_relative_to(allowed_base):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Script path must be under {allowed_base}: {script_path}",
+            )
 
         if not script_file_path.exists():
             raise HTTPException(
@@ -438,14 +455,18 @@ async def run_seed_script(
         # Make script executable
         script_file_path.chmod(0o755)
 
-        # Run the script
-        cmd = [str(script_file_path)] + args
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            cwd="/workdir"
-        )
+        # Run the script without blocking the event loop
+        cmd = [str(script_file_path)] + list(args)
+
+        def _run() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd="/workdir"
+            )
+
+        result = await asyncio.to_thread(_run)
 
         if result.returncode == 0:
             return ToolSeedingResponse(
@@ -664,6 +685,7 @@ async def seed_tool_from_json(
 @router.get("/my-custom-apps", response_model=list[dict])
 async def list_my_custom_apps(
     context: Annotated[deps.RequestContext, Depends(deps.get_request_context)],
+    has_admin_key: Annotated[bool, Depends(acl.is_valid_static_admin_key)],
 ) -> list[dict]:
     """
     List all custom apps created by the current API key holder.
@@ -682,7 +704,13 @@ async def list_my_custom_apps(
                 "description": app.description,
                 "categories": app.categories,
                 "active": app.active,
-                "security_schemes": app.security_schemes,
+                "security_schemes": (
+                    app.security_schemes
+                    if has_admin_key
+                    else SecuritySchemesPublic.model_validate(app.security_schemes).model_dump(
+                        exclude_none=True
+                    )
+                ),
                 "created_at": app.created_at.isoformat(),
                 "updated_at": app.updated_at.isoformat(),
             }
