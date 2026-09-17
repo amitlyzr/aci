@@ -6,8 +6,13 @@ from sqlalchemy.orm import Session
 from aci.common.db import crud
 from aci.common.db.sql_models import App, AppConfiguration, LinkedAccount
 from aci.common.enums import SecurityScheme
-from aci.common.exceptions import NoImplementationFound, OAuth2Error
+from aci.common.exceptions import (
+    NoImplementationFound,
+    OAuth2Error,
+    OAuth2ReauthenticationRequired,
+)
 from aci.common.logging_setup import get_logger
+from aci.common.schemas.linked_accounts import LinkedAccountUpdate
 from aci.common.schemas.security_scheme import (
     APIKeyScheme,
     APIKeySchemeCredentials,
@@ -19,6 +24,10 @@ from aci.common.schemas.security_scheme import (
     SecuritySchemeOverrides,
 )
 from aci.server import config
+from aci.server.linked_account_events import (
+    LinkedAccountEventDeliveryError,
+    emit_linked_account_expired,
+)
 from aci.server.oauth2_manager import OAuth2Manager
 
 logger = get_logger(__name__)
@@ -52,12 +61,31 @@ def resolve_oauth2_expires_at(
 
 
 async def get_security_credentials(
-    app: App, app_configuration: AppConfiguration, linked_account: LinkedAccount
+    db_session: Session,
+    app: App,
+    app_configuration: AppConfiguration,
+    linked_account: LinkedAccount,
 ) -> SecurityCredentialsResponse:
     if linked_account.security_scheme == SecurityScheme.API_KEY:
         return _get_api_key_credentials(app, linked_account)
     elif linked_account.security_scheme == SecurityScheme.OAUTH2:
-        return await _get_oauth2_credentials(app, app_configuration, linked_account)
+        try:
+            return await _get_oauth2_credentials(app, app_configuration, linked_account)
+        except OAuth2ReauthenticationRequired as e:
+            try:
+                await emit_linked_account_expired(linked_account, app, e)
+            except LinkedAccountEventDeliveryError as delivery_error:
+                logger.error(
+                    "Failed to deliver linked_account.expired event, leaving linked "
+                    f"account enabled for retry, linked_account_id={linked_account.id}, "
+                    f"reason_code={e.reason_code}, delivery_error={delivery_error}"
+                )
+                raise e from delivery_error
+            crud.linked_accounts.update_linked_account(
+                db_session, linked_account, LinkedAccountUpdate(enabled=False)
+            )
+            db_session.commit()
+            raise
     elif linked_account.security_scheme == SecurityScheme.NO_AUTH:
         return _get_no_auth_credentials(app, linked_account)
     else:
@@ -199,7 +227,11 @@ async def _refresh_oauth2_access_token(
     # Authorization code flow: use refresh_token
     refresh_token = oauth2_scheme_credentials.refresh_token
     if not refresh_token:
-        raise OAuth2Error("no refresh token found")
+        raise OAuth2ReauthenticationRequired(
+            reason_code="refresh_token_missing",
+            provider_error=None,
+            message="no refresh token found",
+        )
 
     # NOTE: it's important to use oauth2_scheme_credentials's client_id, client_secret, scope because
     # these fields might have changed for the app configuration after the linked account was created
