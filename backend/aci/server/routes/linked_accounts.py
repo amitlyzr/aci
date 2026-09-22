@@ -820,6 +820,12 @@ async def linked_accounts_oauth2_callback(
         linked_account = crud.linked_accounts.update_linked_account_credentials(
             db_session, linked_account, security_credentials
         )
+        # A successful re-authentication supersedes any earlier automatic
+        # disable (e.g. from a terminal refresh-token failure); otherwise the
+        # newly reconnected account would stay unusable.
+        linked_account = crud.linked_accounts.update_linked_account(
+            db_session, linked_account, LinkedAccountUpdate(enabled=True)
+        )
     else:
         # Get the organization ID from the project
         project = crud.projects.get_project(db_session, state.project_id)
@@ -1056,7 +1062,7 @@ async def get_linked_account(
         )
 
     security_credentials_response = await scm.get_security_credentials(
-        linked_account.app, app_configuration, linked_account
+        context.db_session, linked_account.app, app_configuration, linked_account
     )
     scm.update_security_credentials(
         context.db_session, linked_account.app, linked_account, security_credentials_response
@@ -1112,7 +1118,7 @@ async def get_linked_account_full_credentials(
         )
 
     security_credentials_response = await scm.get_security_credentials(
-        linked_account.app, app_configuration, linked_account
+        context.db_session, linked_account.app, app_configuration, linked_account
     )
     scm.update_security_credentials(
         context.db_session, linked_account.app, linked_account, security_credentials_response

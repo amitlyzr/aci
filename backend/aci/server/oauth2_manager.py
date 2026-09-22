@@ -6,7 +6,7 @@ from typing import Any, cast
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
-from aci.common.exceptions import OAuth2Error
+from aci.common.exceptions import OAuth2Error, OAuth2ReauthenticationRequired
 from aci.common.logging_setup import get_logger
 from aci.common.schemas.security_scheme import OAuth2SchemeCredentials
 
@@ -52,6 +52,7 @@ class OAuth2Manager:
                 (e.g., Oracle IDCS — redirect_uri is only expected there for public clients).
                 Defaults to True.
         """
+
         self.app_name = app_name
         self.client_id = client_id
         self.client_secret = client_secret
@@ -216,6 +217,23 @@ class OAuth2Manager:
             )
             return token
         except Exception as e:
+            # Authlib sets `.error` to the provider's raw OAuth2 error code (e.g.
+            # "invalid_grant") when the token endpoint responds with a structured
+            # error body. Only these exact terminal codes mean the refresh token
+            # itself is dead and the user must re-authenticate; everything else
+            # (timeouts, connection failures, provider 5xx, malformed responses,
+            # unrecognized codes) is a generic, retryable OAuth2Error.
+            provider_error = getattr(e, "error", None)
+            if provider_error in ("invalid_grant", "invalid_token", "interaction_required"):
+                logger.error(
+                    "Refresh token rejected by provider as terminal, "
+                    f"app_name={self.app_name}, provider_error={provider_error}, error={e}"
+                )
+                raise OAuth2ReauthenticationRequired(
+                    reason_code="refresh_token_invalid",
+                    provider_error=provider_error,
+                    message="Failed to refresh access token",
+                ) from e
             logger.error(f"Failed to refresh access token, app_name={self.app_name}, error={e}")
             raise OAuth2Error("Failed to refresh access token") from e
 

@@ -499,7 +499,7 @@ async def execute_function(
         )
 
     security_credentials_response: SecurityCredentialsResponse = await scm.get_security_credentials(
-        app_configuration.app, app_configuration, linked_account
+        db_session, app_configuration.app, app_configuration, linked_account
     )
 
     scm.update_security_credentials(

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from aci.common.db import crud
-from aci.common.db.sql_models import App
+from aci.common.db.sql_models import App, AppConfiguration, Project
 from aci.common.enums import SecurityScheme
 from aci.common.schemas.app_configurations import (
     AppConfigurationCreate,
@@ -27,6 +27,7 @@ from aci.common.schemas.security_scheme import (
     SecuritySchemeOverrides,
 )
 from aci.server import config
+from aci.server import security_credentials_manager as scm
 
 MOCK_GOOGLE_AUTH_REDIRECT_URI_PREFIX = (
     "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&"
@@ -333,3 +334,72 @@ def test_link_oauth2_account_under_app_config_with_custom_redirect_url(
             redirect_uri_in_authorization_url
             == f"{config.REDIRECT_URI_BASE}{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/oauth2/callback"
         )
+
+
+def test_oauth2_callback_reenables_disabled_linked_account(
+    test_client: TestClient,
+    db_session: Session,
+    dummy_project_1: Project,
+    dummy_app_google: App,
+    dummy_app_configuration_oauth2_google_project_1: AppConfiguration,
+) -> None:
+    """A successful reconnect must clear an earlier automatic disable (e.g.
+    from a terminal refresh-token failure) so the account is usable again."""
+    linked_account_owner_id = "test_oauth2_callback_reenables_disabled_linked_account"
+    oauth2_scheme_config = dummy_app_google.security_schemes[SecurityScheme.OAUTH2]
+    stale_credentials = OAuth2SchemeCredentials(
+        client_id=oauth2_scheme_config["client_id"],
+        client_secret=oauth2_scheme_config["client_secret"],
+        scope=oauth2_scheme_config["scope"],
+        access_token="stale_access_token",
+        refresh_token="dead_refresh_token",
+        expires_at=0,
+    )
+    disabled_linked_account = crud.linked_accounts.create_linked_account(
+        db_session,
+        dummy_project_1.id,
+        dummy_app_google.name,
+        linked_account_owner_id,
+        SecurityScheme.OAUTH2,
+        stale_credentials,
+        enabled=False,
+    )
+    db_session.commit()
+    assert bool(disabled_linked_account.enabled) is False
+
+    oauth2_scheme = scm.get_app_configuration_oauth2_scheme(
+        dummy_app_configuration_oauth2_google_project_1.app,
+        dummy_app_configuration_oauth2_google_project_1,
+    )
+    state = LinkedAccountOAuth2CreateState(
+        project_id=dummy_project_1.id,
+        app_name=dummy_app_google.name,
+        linked_account_owner_id=linked_account_owner_id,
+        client_id=oauth2_scheme.client_id,
+        code_verifier="code_verifier",
+    )
+    state_jwt = jwt.encode(
+        {"alg": config.JWT_ALGORITHM},
+        state.model_dump(mode="json", exclude_none=True),
+        config.SIGNING_KEY,
+    ).decode()
+
+    mock_oauth2_token_response = {
+        "access_token": "fresh_access_token",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "fresh_refresh_token",
+    }
+    with patch(
+        "aci.server.oauth2_manager.OAuth2Manager.fetch_token",
+        new=AsyncMock(return_value=mock_oauth2_token_response),
+    ):
+        response = test_client.get(
+            f"{config.ROUTER_PREFIX_LINKED_ACCOUNTS}/oauth2/callback",
+            params={"state": state_jwt, "code": "mock_auth_code"},
+        )
+    assert response.status_code == status.HTTP_200_OK
+
+    db_session.refresh(disabled_linked_account)
+    assert bool(disabled_linked_account.enabled) is True
+    assert disabled_linked_account.security_credentials["access_token"] == "fresh_access_token"

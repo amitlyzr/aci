@@ -460,6 +460,28 @@ class OAuth2Error(ACIException):
         )
 
 
+class OAuth2ReauthenticationRequired(OAuth2Error):  # noqa: N818
+    """
+    Raised when an OAuth2 refresh attempt fails for a reason that can only be
+    resolved by the user re-authenticating (e.g. a revoked or invalid refresh
+    token). Distinct from OAuth2Error's other transient/operational failures
+    (timeouts, provider 5xx, malformed responses) which remain retryable.
+
+    Inherits OAuth2Error's HTTP 500 mapping so existing callers see the same
+    broad OAuth failure contract.
+    """
+
+    def __init__(
+        self,
+        reason_code: str,
+        provider_error: str | None = None,
+        message: str | None = None,
+    ):
+        super().__init__(message=message)
+        self.reason_code = reason_code
+        self.provider_error = provider_error
+
+
 class MaxUniqueLinkedAccountOwnerIdsReached(ACIException):
     """Raised when an organization has reached its maximum allowed linked accounts for an app."""
 

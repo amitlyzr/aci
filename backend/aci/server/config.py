@@ -104,3 +104,11 @@ ANTHROPIC_MODEL_FOR_FRONTEND_QA_AGENT = "claude-3-5-sonnet-latest"
 
 # Vector DB
 VECTOR_DB_FULL_URL = check_and_get_env_variable("SERVER_VECTOR_DB_FULL_URL")
+
+# Lyzr Agent webhook (outbound linked-account expiry events)
+# Optional: standalone ACI deployments without a Lyzr Agent integration leave
+# these unset. When either is missing, linked_account_events treats delivery
+# as failed and the terminal OAuth error is re-raised without disabling the
+# linked account.
+LYZR_AGENT_WEBHOOK_URL = os.getenv("SERVER_LYZR_AGENT_WEBHOOK_URL")
+LYZR_AGENT_WEBHOOK_SIGNING_SECRET = os.getenv("SERVER_LYZR_AGENT_WEBHOOK_SIGNING_SECRET")
