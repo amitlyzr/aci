@@ -30,22 +30,26 @@ async def create_project(
 ) -> Project:
     logger.info(f"Create project, org_id={body.org_id}")
 
-    quota_manager.enforce_project_creation_quota(db_session, body.org_id)
-
-    project = crud.projects.create_project(db_session, body.org_id, body.name)
-
-    # Create a default Agent for the project
-    agent = crud.projects.create_agent(
-        db_session,
-        project.id,
-        name="Default Agent",
-        description="Default Agent",
-        allowed_apps=[],
-        custom_instructions={},
-    )
-    db_session.commit()
-    
-    logger.info(f"Created project, project_id={project.id}, org_id={body.org_id}")
+    # Owner-based, not api-key-based: one project per (org_id, name). A repeat
+    # call for the same owner returns the existing project and its key rather
+    # than minting a duplicate (which would orphan that owner's linked
+    # accounts). Only a genuinely new project is quota-checked and created.
+    project = crud.projects.get_project_by_org_and_name(db_session, body.org_id, body.name)
+    if project is None:
+        quota_manager.enforce_project_creation_quota(db_session, body.org_id)
+        project = crud.projects.create_project(db_session, body.org_id, body.name)
+        crud.projects.create_agent(
+            db_session,
+            project.id,
+            name="Default Agent",
+            description="Default Agent",
+            allowed_apps=[],
+            custom_instructions={},
+        )
+        db_session.commit()
+        logger.info(f"Created project, project_id={project.id}, org_id={body.org_id}")
+    else:
+        logger.info(f"Reusing project, project_id={project.id}, org_id={body.org_id}")
     
     # Convert to ProjectPublic model to avoid DetachedInstanceError
     from aci.common.schemas.project import ProjectPublic

@@ -59,6 +59,23 @@ def get_projects_by_org(db_session: Session, org_id: str) -> list[Project]:
     return projects
 
 
+def get_project_by_org_and_name(db_session: Session, org_id: str, name: str) -> Project | None:
+    # Owner-based lookup: one project per (org_id, name). Callers name each
+    # owner's project uniquely, so project creation is idempotent per owner
+    # instead of minting a fresh project+key on every call. order_by keeps the
+    # result stable if pre-existing duplicates exist (returns the oldest).
+    project: Project | None = (
+        db_session.execute(
+            select(Project)
+            .filter_by(org_id=org_id, name=name)
+            .order_by(Project.created_at.asc())
+        )
+        .scalars()
+        .first()
+    )
+    return project
+
+
 def get_project_by_api_key_id(db_session: Session, api_key_id: UUID) -> Project | None:
     # api key id -> agent id -> project id
     project: Project | None = db_session.execute(
